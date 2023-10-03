@@ -16,6 +16,7 @@ import ray
 
 from flaml.automl.task import Task
 from flaml.automl.task.factory import task_factory
+from flaml.tune.searcher.stratum_asha import StratumAsyncHyperBandScheduler
 
 dataset = "default-of-credit-card-clients"
 seed = 42
@@ -68,6 +69,46 @@ def train_credit_card_default(config, X, y):
               callbacks=[TuneReportCheckpointCallback()])
 
 
+def run_metric_constraint(exp_name, scheduler_name):
+    metric = f"{EVAL_NAME}-auc"
+    constraint_metric = f"{EVAL_NAME}-eod"
+    time_budget = 120
+    mode = "max"
+    metric_constraints = [(constraint_metric, "<=", 0.3)]
+    # default-of-credit-card-clients
+    X, y = fetch_openml(return_X_y=True, data_id=42477)
+    search_state = SearchState(learner_class=LGBMEstimator, data=X, task=task_factory('binary'), budget=time_budget)
+    if scheduler_name == "stratum_asha":
+        scheduler = StratumAsyncHyperBandScheduler(max_t=X.shape[0], metric_constraints=metric_constraints)
+    elif scheduler_name == "asha":
+        scheduler = AsyncHyperBandScheduler(max_t=X.shape[0])
+    else:
+        scheduler = None
+    analysis = tune.run(
+        partial(train_credit_card_default, X=X, y=y),
+        name=exp_name,
+        scheduler=scheduler,
+        search_alg=BlendSearch(
+            metric=metric,
+            mode=mode,
+            space=search_state.search_space,
+            points_to_evaluate=search_state.init_config,
+            low_cost_partial_config=search_state.low_cost_partial_config,
+            metric_constraints=metric_constraints,
+            seed=seed,
+            time_budget_s=time_budget,
+        ),
+        num_samples=5,
+        max_concurrent_trials=1,
+        checkpoint_score_attr=metric,
+        keep_checkpoints_num=1,
+        raise_on_failed_trial=False,
+        use_ray=True,
+        verbose=3,
+    )
+    print(f"best result: {analysis.best_result}")
+
+
 class TestConstraint(unittest.TestCase):
     def test_config_constraint(self):
         # Test dict return value
@@ -97,38 +138,11 @@ class TestConstraint(unittest.TestCase):
         assert analysis.best_config["x"] > analysis.best_config["y"]
         assert analysis.trials[0].config["x"] > analysis.trials[0].config["y"]
 
-    def test_metric_constraint(self):
-        metric = f"{EVAL_NAME}-auc"
-        constraint_metric = f"{EVAL_NAME}-eod"
-        time_budget = 120
-        mode = "max"
-        metric_constraints = [(constraint_metric, "<=", 0.3)]
-        # default-of-credit-card-clients
-        X, y = fetch_openml(return_X_y=True, data_id=42477)
-        search_state = SearchState(learner_class=LGBMEstimator, data=X, task=task_factory('binary'), budget=time_budget)
-        analysis = tune.run(
-            partial(train_credit_card_default, X=X, y=y),
-            name="test_metric_constraint",
-            scheduler=AsyncHyperBandScheduler(max_t=X.shape[0]),
-            search_alg=BlendSearch(
-                metric=metric,
-                mode=mode,
-                space=search_state.search_space,
-                points_to_evaluate=search_state.init_config,
-                low_cost_partial_config=search_state.low_cost_partial_config,
-                metric_constraints=metric_constraints,
-                seed=seed,
-                time_budget_s=time_budget,
-            ),
-            num_samples=5,
-            max_concurrent_trials=1,
-            checkpoint_score_attr=metric,
-            keep_checkpoints_num=1,
-            raise_on_failed_trial=False,
-            use_ray=True,
-            verbose=3,
-        )
-        print(f"best result: {analysis.best_result}")
+    def test_metric_constraint_asha(self):
+        run_metric_constraint(exp_name="test_metric_constraint", scheduler_name="asha")
+
+    def test_metric_constraint_stratum_asha(self):
+        run_metric_constraint(exp_name="test_metric_constraint_stratum_asha", scheduler_name="stratum_asha")
 
 
 if __name__ == '__main__':
