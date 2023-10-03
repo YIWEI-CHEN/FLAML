@@ -12,11 +12,9 @@ from flaml.automl.model import LGBMEstimator
 
 from ray.tune.integration.lightgbm import TuneReportCheckpointCallback
 from ray.tune.schedulers import AsyncHyperBandScheduler
-import ray
 
-from flaml.automl.task import Task
 from flaml.automl.task.factory import task_factory
-from flaml.tune.searcher.stratum_asha import StratumAsyncHyperBandScheduler
+from flaml.tune.scheduler.stratum_asha import StratumAsyncHyperBandScheduler
 
 dataset = "default-of-credit-card-clients"
 seed = 42
